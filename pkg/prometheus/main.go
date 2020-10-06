@@ -66,7 +66,7 @@ func ExecPromQuery(apiClient v1.API, query string) ([]*PrometheusMetric, error) 
 	defer cancel()
 
 	r := v1.Range{
-		Start: time.Now().Add(-5 * time.Minute),
+		Start: time.Now().Add(-3 * time.Minute),
 		End:   time.Now(),
 		Step:  time.Minute,
 	}
@@ -78,6 +78,7 @@ func ExecPromQuery(apiClient v1.API, query string) ([]*PrometheusMetric, error) 
 	if !ok {
 		return nil, fmt.Errorf("Failed to safely index the model matrix: %+v", err)
 	}
+	fmt.Println("Finished executing the", query, "promQL query")
 
 	return promMatrixToPrometheusMetrics(r, matrix), nil
 }

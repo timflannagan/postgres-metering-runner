@@ -1,10 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	_ "github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 	runner "github.com/timflannagan1/scratch/pkg/postgres"
@@ -27,6 +28,23 @@ var (
 		Short: "Execute the Postgresql runner package",
 		RunE:  execRunner,
 	}
+	defaultPromtheusQueries = []string{
+		"metering:node_allocatable_cpu_cores",
+		"metering:node_allocatable_memory_bytes",
+		"metering:node_capacity_cpu_cores",
+		"metering:node_capacity_memory_bytes",
+		"metering:persistentvolumeclaim_capacity_bytes",
+		"metering:persistentvolumeclaim_phase",
+		"metering:persistentvolumeclaim_request_bytes",
+		"metering:persistentvolumeclaim_usage_bytes",
+		"metering:pod_limit_cpu_cores",
+		"metering:pod_limit_memory_bytes",
+		"metering:pod_persistentvolumeclaim_request_info",
+		"metering:pod_request_cpu_cores",
+		"metering:pod_request_memory_bytes",
+		"metering:pod_usage_cpu_cores",
+		"metering:pod_usage_memory_bytes",
+	}
 )
 
 const (
@@ -36,7 +54,6 @@ const (
 
 	defaultPrometheusHostname = "localhost"
 	defaultPrometheusPort     = "9090"
-	defaultPrometheusQuery    = "namespace:container_cpu_usage_seconds_total:sum_rate"
 
 	defaultDatabaseName       = "metering"
 	defaultTableName          = "test"
@@ -71,22 +88,11 @@ func execRunner(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to initialize the PostgresqlRunner type: %+v", err)
 	}
-	defer r.Queryer.Close(context.Background())
-
-	err = r.Queryer.Ping(context.Background())
-	if err != nil {
-		return err
-	}
+	defer r.Queryer.Close()
 
 	err = r.CreateDatabase(defaultDatabaseName)
 	if err != nil {
 		return fmt.Errorf("Failed to create the metering database: %+v", err)
-	}
-	// TODO: need to pass in a configuration file for creating the tables we're
-	// interested in going forward.
-	err = r.CreateTable(defaultTableName, defaultCheckIfTableExists)
-	if err != nil {
-		return fmt.Errorf("Failed to create the test table in the metering database: %+v", err)
 	}
 
 	// TODO: use something more robust to build up the Prometheus URL besides fmt.Sprintf
@@ -94,15 +100,60 @@ func execRunner(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	metrics, err := prom.ExecPromQuery(apiClient, defaultPrometheusQuery)
+	err = populatePostgresTables(apiClient, *r)
 	if err != nil {
 		return err
 	}
-	for _, metric := range metrics {
-		err = r.InsertValuesIntoTable(defaultTableName, *metric)
+
+	fmt.Println("Runner has finished")
+
+	return nil
+}
+
+func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
+	// TODO: this is such a poor implementation but should get the job done.
+	// TODO: should benchmark this eventually.
+	// TODO: should add a pprof debug profile.
+	// TODO: should throw this in a Goroutine and use a shared connection pool.
+	// TODO: need a way to track the last import timestamp so we're not potentially
+	//		 importing duplicate metrics and save a decent amount of overhead.
+	// TODO: should probably create the table first, then insert into it using
+	// the same connection tag that conn.Exec returns.
+	//
+	// For each metric we're interested in tracking, ensure a Postgres table has
+	// been created, and attempt to populate that table with the resultant matrix
+	// values that gets returned from the query_range API.
+	errChan := make(chan error, 2)
+	for _, query := range defaultPromtheusQueries {
+		go func(query string) {
+			err := r.CreateTable(strings.Replace(query, ":", "_", -1), defaultCheckIfTableExists)
+			if err != nil {
+				errChan <- fmt.Errorf("Failed to create the test table in the metering database: %+v", err)
+			}
+		}(query)
+	}
+
+	for _, query := range defaultPromtheusQueries {
+		metrics, err := prom.ExecPromQuery(apiClient, query)
 		if err != nil {
 			return err
 		}
+		tableName := strings.Replace(query, ":", "_", -1)
+
+		fmt.Println("Inserting values into the", tableName, "table for the", query, "promQL query")
+		for _, metric := range metrics {
+			go func(metric *prom.PrometheusMetric) {
+				err = r.InsertValuesIntoTable(tableName, *metric)
+				if err != nil {
+					errChan <- err
+				}
+			}(metric)
+		}
+	}
+
+	select {
+	case err := <-errChan:
+		fmt.Println(err.Error())
 	}
 
 	return nil

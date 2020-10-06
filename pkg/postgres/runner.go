@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 	prom "github.com/timflannagan1/scratch/pkg/prometheus"
 )
 
@@ -20,13 +20,13 @@ type PostgresqlConfig struct {
 // PostgresqlRunner is reponsible for managing a Postgresql client instance.
 type PostgresqlRunner struct {
 	Config  *PostgresqlConfig
-	Queryer *pgx.Conn
+	Queryer *pgxpool.Pool
 }
 
 // NewPostgresqlRunner is the constructor for the NewPostgresqlRunner type
 func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
 	uri := fmt.Sprintf("user=testuser host=%s port=%d dbname=%s connect_timeout=10", config.Hostname, config.Port, config.DatabaseName)
-	conn, err := pgx.Connect(context.Background(), uri)
+	conn, err := pgxpool.Connect(context.Background(), uri)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create a connection to the configured Postgres instance: %+v", err)
 	}
@@ -39,13 +39,15 @@ func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
 
 // CreateDatabase is responsible for creating the @name database in Postgres
 // Note: Postgres has no notion of `if not exists`, so always attempt to create
-// the database.
+// the database. Workaround was implemented following the following stackoverflow post:
+// https://stackoverflow.com/questions/18389124/simulate-create-database-if-not-exists-for-postgresql
 func (r *PostgresqlRunner) CreateDatabase(databaseName string) error {
-	rows, err := r.Queryer.Query(context.Background(), fmt.Sprintf("CREATE DATABASE %s", databaseName))
+	createSQL := fmt.Sprintf("SELECT 'CREATE DATABASE %s' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '%s')", databaseName, databaseName)
+	fmt.Println(createSQL)
+	_, err := r.Queryer.Exec(context.Background(), createSQL)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	return nil
 }
@@ -57,12 +59,13 @@ func (r *PostgresqlRunner) CreateTable(tableName string, checkIfExists bool) err
 	if checkIfExists {
 		ifNotExistsStr = "IF NOT EXISTS"
 	}
-	createSQL := fmt.Sprintf(`CREATE TABLE %s %s(amount float8, timestamp timestamptz, timePrecision float8, labels jsonb)`, ifNotExistsStr, tableName)
 
+	createSQL := fmt.Sprintf(`CREATE TABLE %s %s(amount float8, timestamp timestamptz, timePrecision float8, labels jsonb)`, ifNotExistsStr, tableName)
 	_, err := r.Queryer.Exec(context.Background(), createSQL)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Processing the %s table for creation\n", tableName)
 
 	return nil
 }
