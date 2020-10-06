@@ -2,4 +2,6 @@
 
 set -eou pipefail
 
-oc -n tflannag port-forward svc/postgres 5432:5432 &
+NAMESPACE=${1:-tflannag}
+
+oc -n ${NAMESPACE} port-forward svc/postgres 5432:5432 &

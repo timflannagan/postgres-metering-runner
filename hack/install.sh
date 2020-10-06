@@ -1,6 +1,6 @@
 #! /bin/bash
 
-set -oeu pipefail
+set -eou pipefail
 
 namespace=${1:-tflannag}
 
