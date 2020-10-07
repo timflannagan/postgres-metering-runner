@@ -133,6 +133,9 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 		}(query)
 	}
 
+	// TODO: seeing the go routine eventually hang when attempting to parallelize
+	// some of this computation, so use a serial implementation for now and eventually
+	// spend some time diving into why that's happening.
 	for _, query := range defaultPromtheusQueries {
 		metrics, err := prom.ExecPromQuery(apiClient, query)
 		if err != nil {
@@ -140,20 +143,20 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 		}
 		tableName := strings.Replace(query, ":", "_", -1)
 
+		// TODO: debug artiface
 		fmt.Println("Inserting values into the", tableName, "table for the", query, "promQL query")
-		for _, metric := range metrics {
-			go func(metric *prom.PrometheusMetric) {
-				err = r.InsertValuesIntoTable(tableName, *metric)
-				if err != nil {
-					errChan <- err
-				}
-			}(metric)
-		}
-	}
 
-	select {
-	case err := <-errChan:
-		fmt.Println(err.Error())
+		var metricInsertErrArr []string
+		for _, metric := range metrics {
+			err = r.InsertValuesIntoTable(tableName, *metric)
+			if err != nil {
+				metricInsertErrArr = append(metricInsertErrArr, fmt.Sprintf("Failed to a metric: %v", err))
+			}
+		}
+
+		if len(metricInsertErrArr) != 0 {
+			return fmt.Errorf(strings.Join(metricInsertErrArr, "\n"))
+		}
 	}
 
 	return nil
