@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -13,7 +14,8 @@ import (
 )
 
 var (
-	cfg      runner.PostgresqlConfig
+	pgCfg    runner.PostgresqlConfig
+	promCfg  prom.PrometheusImporterConfig
 	logLevel string
 
 	rootCmd = &cobra.Command{
@@ -52,8 +54,9 @@ const (
 	defaultPostgresPort     = 5432
 	defaultPostgreSSLMode   = "disable"
 
-	defaultPrometheusHostname = "localhost"
-	defaultPrometheusPort     = "9090"
+	// Note: in case you're running outside of a Pod, use the monitoring routes
+	// instead of relying on the Service DNS resolution.
+	defaultPrometheusURI = "https://thanos-querier.openshift-monitoring.svc:9091"
 
 	defaultDatabaseName       = "metering"
 	defaultTableName          = "test"
@@ -61,11 +64,14 @@ const (
 )
 
 func init() {
-	// TODO: need to add configuration flags for the Prometheus connection
-	rootCmd.PersistentFlags().StringVar(&cfg.Hostname, "postgres-address", defaultPostgresHostname, "The hostname of the Postgresql database instance. Defaults to localhost.")
-	rootCmd.PersistentFlags().IntVar(&cfg.Port, "postgres-port", defaultPostgresPort, "The hostname of the Postgresql database instance. Defaults to localhost.")
-	rootCmd.PersistentFlags().StringVar(&cfg.SSLMode, "postgres-ssl-mode", defaultPostgreSSLMode, "The sslMode configuration for how to authenticate to the Postgresql database instance.")
-	rootCmd.PersistentFlags().StringVar(&cfg.DatabaseName, "postgres-database-name", "metering", "The name of an existing database in Postgresql.")
+	rootCmd.PersistentFlags().StringVar(&pgCfg.Hostname, "postgres-address", defaultPostgresHostname, "The hostname of the Postgresql database instance. Defaults to localhost.")
+	rootCmd.PersistentFlags().IntVar(&pgCfg.Port, "postgres-port", defaultPostgresPort, "The hostname of the Postgresql database instance. Defaults to localhost.")
+	rootCmd.PersistentFlags().StringVar(&pgCfg.SSLMode, "postgres-ssl-mode", defaultPostgreSSLMode, "The sslMode configuration for how to authenticate to the Postgresql database instance.")
+	rootCmd.PersistentFlags().StringVar(&pgCfg.DatabaseName, "postgres-database-name", "metering", "The name of an existing database in Postgresql.")
+
+	rootCmd.PersistentFlags().StringVar(&promCfg.Hostname, "prometheus-address", defaultPrometheusURI, "The hostname of the Prometheus cluster instance")
+	rootCmd.PersistentFlags().StringVar(&promCfg.BearerToken, "prometheus-bearer-token", "", "The path to the bearer token file used to authenticate to the Prometheus instance")
+	rootCmd.PersistentFlags().BoolVar(&promCfg.SkipTLSVerification, "prometheus-tls-insecure", true, "Allow insecure connections to Prometheus")
 }
 
 func main() {
@@ -80,11 +86,17 @@ func main() {
 
 // execRunner is responsible for executing the runner package
 func execRunner(cmd *cobra.Command, args []string) error {
-	fmt.Println("Attempting to setup a connection to the Postgresql instance")
+	var err error
+	promCfg.Address, err = url.Parse(promCfg.Hostname)
+	if err != nil {
+		return fmt.Errorf("Failed to parse the Prometheus URL: %v", err)
+	}
+	apiClient, err := prom.NewPrometheusAPIClient(promCfg)
+	if err != nil {
+		return err
+	}
 
-	// TODO: should be using a connection pool and not piggy backing off a single
-	// thread as it's not thread safe.
-	r, err := runner.NewPostgresqlRunner(cfg)
+	r, err := runner.NewPostgresqlRunner(pgCfg)
 	if err != nil {
 		return fmt.Errorf("Failed to initialize the PostgresqlRunner type: %+v", err)
 	}
@@ -93,12 +105,6 @@ func execRunner(cmd *cobra.Command, args []string) error {
 	err = r.CreateDatabase(defaultDatabaseName)
 	if err != nil {
 		return fmt.Errorf("Failed to create the metering database: %+v", err)
-	}
-
-	// TODO: use something more robust to build up the Prometheus URL besides fmt.Sprintf
-	apiClient, err := prom.NewPrometheusAPIClient(fmt.Sprintf("http://%s:%s", defaultPrometheusHostname, defaultPrometheusPort))
-	if err != nil {
-		return err
 	}
 	err = populatePostgresTables(apiClient, *r)
 	if err != nil {
@@ -133,6 +139,9 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 		}(query)
 	}
 
+	// TODO: running into the problem where the table hasn't been created yet,
+	// but we're attempting to insert values into that particular table.
+	//
 	// TODO: seeing the go routine eventually hang when attempting to parallelize
 	// some of this computation, so use a serial implementation for now and eventually
 	// spend some time diving into why that's happening.
@@ -142,8 +151,6 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 			return err
 		}
 		tableName := strings.Replace(query, ":", "_", -1)
-
-		// TODO: debug artiface
 		fmt.Println("Inserting values into the", tableName, "table for the", query, "promQL query")
 
 		var metricInsertErrArr []string

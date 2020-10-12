@@ -43,7 +43,6 @@ func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
 // https://stackoverflow.com/questions/18389124/simulate-create-database-if-not-exists-for-postgresql
 func (r *PostgresqlRunner) CreateDatabase(databaseName string) error {
 	createSQL := fmt.Sprintf("SELECT 'CREATE DATABASE %s' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '%s')", databaseName, databaseName)
-	fmt.Println(createSQL)
 	_, err := r.Queryer.Exec(context.Background(), createSQL)
 	if err != nil {
 		return err

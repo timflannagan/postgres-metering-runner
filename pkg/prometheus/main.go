@@ -26,10 +26,10 @@ import (
 // PrometheusImporterConfig is holds the configuration needed to establish a
 // connection to Prometheus to import metrics into Postgres.
 type PrometheusImporterConfig struct {
-	Hostname    string
-	Port        int
-	Address     *url.URL
-	BearerToken string
+	Hostname            string
+	Address             *url.URL
+	BearerToken         string
+	SkipTLSVerification bool
 }
 
 // PrometheusMetric is a receipt of a usage determined by a query within a specific time range.
@@ -44,14 +44,13 @@ type PrometheusMetric struct {
 // NewPrometheusAPIClient is a helper function responsible for setting up an API
 // client to the Prometheus instance at the @address URL.
 func NewPrometheusAPIClient(cfg PrometheusImporterConfig) (v1.API, error) {
-	config := &transport.Config{
+	ht, err := transport.New(&transport.Config{
 		BearerToken: cfg.BearerToken,
 
 		TLS: transport.TLSConfig{
-			Insecure: true,
+			Insecure: cfg.SkipTLSVerification,
 		},
-	}
-	ht, err := transport.New(config)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("Failed to initialize a RoundTripper: %v", err)
 	}
