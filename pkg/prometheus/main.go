@@ -13,15 +13,24 @@ Note(s):
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	"k8s.io/client-go/transport"
 )
+
+// PrometheusImporterConfig is holds the configuration needed to establish a
+// connection to Prometheus to import metrics into Postgres.
+type PrometheusImporterConfig struct {
+	Hostname    string
+	Port        int
+	Address     *url.URL
+	BearerToken string
+}
 
 // PrometheusMetric is a receipt of a usage determined by a query within a specific time range.
 type PrometheusMetric struct {
@@ -34,22 +43,22 @@ type PrometheusMetric struct {
 
 // NewPrometheusAPIClient is a helper function responsible for setting up an API
 // client to the Prometheus instance at the @address URL.
-//
-// Note: in order to avoid mounting the correct system CAs in order to properly
-// authenticate to Prometheus, just port-forward to a local port and point
-// the client configuration to that address. Also need to investigate whether
-// http.Transport has support for passing an authentication header explicitly.
-//
-// Command used locally:
-// k -n openshift-monitoring port-forward svc/prometheus-operated 9090:9090 &
-func NewPrometheusAPIClient(address string) (v1.API, error) {
-	client, err := api.NewClient(api.Config{
-		Address: address,
-		RoundTripper: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
+func NewPrometheusAPIClient(cfg PrometheusImporterConfig) (v1.API, error) {
+	config := &transport.Config{
+		BearerToken: cfg.BearerToken,
+
+		TLS: transport.TLSConfig{
+			Insecure: true,
 		},
+	}
+	ht, err := transport.New(config)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to initialize a RoundTripper: %v", err)
+	}
+
+	client, err := api.NewClient(api.Config{
+		Address:      cfg.Address.String(),
+		RoundTripper: ht,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create the Prometheus API client: %+v", err)
@@ -66,7 +75,7 @@ func ExecPromQuery(apiClient v1.API, query string) ([]*PrometheusMetric, error) 
 	defer cancel()
 
 	r := v1.Range{
-		Start: time.Now().Add(-3 * time.Minute),
+		Start: time.Now().Add(-5 * time.Minute),
 		End:   time.Now(),
 		Step:  time.Minute,
 	}
