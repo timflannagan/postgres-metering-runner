@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 
+	"github.com/jackc/pgx/v4"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	_ "github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
@@ -151,24 +153,44 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 	}
 
 	for _, query := range defaultPromtheusQueries {
-		metrics, err := prom.ExecPromQuery(apiClient, query)
-		if err != nil {
-			return err
-		}
-		tableName := strings.Replace(query, ":", "_", -1)
-		fmt.Println("Inserting values into the", tableName, "table for the", query, "promQL query")
+		wg.Add(1)
+		go func(query string) {
+			defer wg.Done()
 
-		var metricInsertErrArr []string
-		for _, metric := range metrics {
-			err = r.InsertValuesIntoTable(tableName, *metric)
+			var errArr []string
+			metrics, err := prom.ExecPromQuery(apiClient, query)
 			if err != nil {
-				metricInsertErrArr = append(metricInsertErrArr, fmt.Sprintf("Failed to a metric: %v", err))
+				errArr = append(errArr, fmt.Sprintf("Failed to execute the %s query: %v", query, err))
 			}
-		}
 
-		if len(metricInsertErrArr) != 0 {
-			return fmt.Errorf(strings.Join(metricInsertErrArr, "\n"))
-		}
+			tableName := strings.Replace(query, ":", "_", -1)
+			fmt.Println("Inserting values into the", tableName, "table for the", query, "promQL query")
+
+			b := pgx.Batch{}
+			for _, metric := range metrics {
+				err = r.BatchInsertValuesIntoTable(&b, tableName, *metric)
+				if err != nil {
+					errArr = append(errArr, fmt.Sprintf("Failed to construct batch insert: %v", err))
+				}
+			}
+
+			// TODO: need to handle the case where the length of the batch queue
+			// is greater than an upper bound of ~50 and flush the rest of those
+			// metrics into a new batch.
+			fmt.Printf("Pre-Batch Insert Length: %d\n", b.Len())
+			br := r.Queryer.SendBatch(context.Background(), &b)
+			ct, err := br.Exec()
+			if err != nil {
+				errArr = append(errArr, fmt.Sprintf("failed to execute batch results: %+v", err))
+			}
+			fmt.Printf("Batch insert summary: %+v\n", ct.RowsAffected())
+
+			if len(errArr) != 0 {
+				fmt.Println(fmt.Errorf(strings.Join(errArr, "\n")))
+			}
+		}(query)
+
+		wg.Wait()
 	}
 
 	return nil

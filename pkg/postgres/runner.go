@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	prom "github.com/timflannagan1/scratch/pkg/prometheus"
 )
@@ -75,6 +76,21 @@ func (r *PostgresqlRunner) CreateTable(tableName string, checkIfExists bool) err
 		return err
 	}
 	fmt.Printf("Processing the %s table for creation\n", tableName)
+
+	return nil
+}
+
+// BatchInsertValuesIntoTable is responsible for building up an `insert into values`
+// transaction and queueing that transaction in the @b batch queue.
+func (r *PostgresqlRunner) BatchInsertValuesIntoTable(b *pgx.Batch, tableName string, metric prom.PrometheusMetric) error {
+	// Note: this is an expensive operation so probabaly need to refactor
+	// this functionality when interacting with a lot of metric labels at once.
+	labels, err := json.Marshal(metric.Labels)
+	if err != nil {
+		return fmt.Errorf("Failed to marshal the map[string]string labels to JSON: %v", err)
+	}
+
+	b.Queue(fmt.Sprintf("INSERT INTO %s VALUES($1, $2, $3, ($4)::jsonb)", tableName), metric.Amount, metric.Timestamp, float64(metric.StepSize), labels)
 
 	return nil
 }
