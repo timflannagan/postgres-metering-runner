@@ -25,8 +25,18 @@ type PostgresqlRunner struct {
 
 // NewPostgresqlRunner is the constructor for the NewPostgresqlRunner type
 func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
-	uri := fmt.Sprintf("user=testuser host=%s port=%d dbname=%s connect_timeout=10", config.Hostname, config.Port, config.DatabaseName)
-	conn, err := pgxpool.Connect(context.Background(), uri)
+	// TODO: add a list of options that gets unpacked during the fmt.Sprintf call
+	// TODO: hardcode the username/password for now as we control the Postgres manifest
+	// that gets created.
+	connString := fmt.Sprintf("postgresql://testuser:testpass@%s:%d/%s?connect_timeout=10", config.Hostname, config.Port, config.DatabaseName)
+
+	cfg, err := pgxpool.ParseConfig(connString)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to construct a pgxpool.Config based on the %s connection string: %v", connString, err)
+	}
+	fmt.Printf("Postgres Configuration: %+v\n", cfg.ConnString())
+
+	conn, err := pgxpool.Connect(context.Background(), cfg.ConnString())
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create a connection to the configured Postgres instance: %+v", err)
 	}
