@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	_ "github.com/prometheus/client_golang/prometheus"
@@ -123,28 +124,32 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 	// TODO: should throw this in a Goroutine and use a shared connection pool.
 	// TODO: need a way to track the last import timestamp so we're not potentially
 	//		 importing duplicate metrics and save a decent amount of overhead.
-	// TODO: should probably create the table first, then insert into it using
-	// the same connection tag that conn.Exec returns.
 	//
 	// For each metric we're interested in tracking, ensure a Postgres table has
 	// been created, and attempt to populate that table with the resultant matrix
 	// values that gets returned from the query_range API.
-	errChan := make(chan error, 2)
+	errCh := make(chan error)
+
+	var wg sync.WaitGroup
 	for _, query := range defaultPromtheusQueries {
+		wg.Add(1)
 		go func(query string) {
+			defer wg.Done()
+
 			err := r.CreateTable(strings.Replace(query, ":", "_", -1), defaultCheckIfTableExists)
 			if err != nil {
-				errChan <- fmt.Errorf("Failed to create the test table in the metering database: %+v", err)
+				errCh <- fmt.Errorf("Failed to create the test table in the metering database: %+v", err)
 			}
 		}(query)
+
+		wg.Wait()
 	}
 
-	// TODO: running into the problem where the table hasn't been created yet,
-	// but we're attempting to insert values into that particular table.
-	//
-	// TODO: seeing the go routine eventually hang when attempting to parallelize
-	// some of this computation, so use a serial implementation for now and eventually
-	// spend some time diving into why that's happening.
+	close(errCh)
+	for e := range errCh {
+		fmt.Println(e.Error())
+	}
+
 	for _, query := range defaultPromtheusQueries {
 		metrics, err := prom.ExecPromQuery(apiClient, query)
 		if err != nil {
