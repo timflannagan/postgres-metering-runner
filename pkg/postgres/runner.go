@@ -83,11 +83,9 @@ func (r *PostgresqlRunner) CreateTable(tableName string, checkIfExists bool) err
 // BatchInsertValuesIntoTable is responsible for building up an `insert into values`
 // transaction and queueing that transaction in the @b batch queue.
 func (r *PostgresqlRunner) BatchInsertValuesIntoTable(b *pgx.Batch, tableName string, metric prom.PrometheusMetric) error {
-	// Note: this is an expensive operation so probabaly need to refactor
-	// this functionality when interacting with a lot of metric labels at once.
-	labels, err := json.Marshal(metric.Labels)
+	labels, err := convertLabelsMapToJSON(metric.Labels)
 	if err != nil {
-		return fmt.Errorf("Failed to marshal the map[string]string labels to JSON: %v", err)
+		return err
 	}
 
 	b.Queue(fmt.Sprintf("INSERT INTO %s VALUES($1, $2, $3, ($4)::jsonb)", tableName), metric.Amount, metric.Timestamp, float64(metric.StepSize), labels)
@@ -99,11 +97,9 @@ func (r *PostgresqlRunner) BatchInsertValuesIntoTable(b *pgx.Batch, tableName st
 // in the @metric type, marshalling the map[string]string metric.Labels into JSON,
 // and performing the `insert into ... values(...)` call to the @tableName table.
 func (r *PostgresqlRunner) InsertValuesIntoTable(tableName string, metric prom.PrometheusMetric) error {
-	// Note: this is an expensive operation so probabaly need to refactor
-	// this functionality when interacting with a lot of metric labels at once.
-	labels, err := json.Marshal(metric.Labels)
+	labels, err := convertLabelsMapToJSON(metric.Labels)
 	if err != nil {
-		return fmt.Errorf("Failed to marshal the map[string]string labels to JSON: %v", err)
+		return err
 	}
 
 	_, err = r.Queryer.Exec(context.Background(), fmt.Sprintf("INSERT INTO %s VALUES($1, $2, $3, ($4)::jsonb)", tableName), metric.Amount, metric.Timestamp, float64(metric.StepSize), labels)
@@ -112,4 +108,14 @@ func (r *PostgresqlRunner) InsertValuesIntoTable(tableName string, metric prom.P
 	}
 
 	return nil
+}
+
+// convertLabelsMapToJSON is a helper function responsible for translating
+// a map of Prometheus metric labels into a JSON string.
+func convertLabelsMapToJSON(labels map[string]string) ([]byte, error) {
+	l, err := json.Marshal(labels)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to marshal metric labels into a JSON string: %v", err)
+	}
+	return l, nil
 }
