@@ -9,9 +9,11 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v4"
-	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	_ "github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+
 	runner "github.com/timflannagan1/scratch/pkg/postgres"
 	prom "github.com/timflannagan1/scratch/pkg/prometheus"
 )
@@ -89,7 +91,11 @@ func main() {
 
 // execRunner is responsible for executing the runner package
 func execRunner(cmd *cobra.Command, args []string) error {
-	var err error
+	logger, err := setupLogger("INFO")
+	if err != nil {
+		return err
+	}
+
 	promCfg.Address, err = url.Parse(promCfg.Hostname)
 	if err != nil {
 		return fmt.Errorf("Failed to parse the Prometheus URL: %v", err)
@@ -99,7 +105,7 @@ func execRunner(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	r, err := runner.NewPostgresqlRunner(pgCfg)
+	r, err := runner.NewPostgresqlRunner(pgCfg, logger)
 	if err != nil {
 		return fmt.Errorf("Failed to initialize the PostgresqlRunner type: %+v", err)
 	}
@@ -109,17 +115,17 @@ func execRunner(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to create the metering database: %+v", err)
 	}
-	err = populatePostgresTables(apiClient, *r)
+	err = populatePostgresTables(logger, apiClient, *r)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("Runner has finished")
+	logger.Infof("Runner has finished")
 
 	return nil
 }
 
-func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
+func populatePostgresTables(logger logrus.FieldLogger, apiClient v1.API, r runner.PostgresqlRunner) error {
 	// TODO: this is such a poor implementation but should get the job done.
 	// TODO: should benchmark this eventually.
 	// TODO: should add a pprof debug profile.
@@ -149,7 +155,7 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 
 	close(errCh)
 	for e := range errCh {
-		fmt.Println(e.Error())
+		logger.Fatal(e.Error())
 	}
 
 	for _, query := range defaultPromtheusQueries {
@@ -158,13 +164,13 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 			defer wg.Done()
 
 			var errArr []string
-			metrics, err := prom.ExecPromQuery(apiClient, query)
+			metrics, err := prom.ExecPromQuery(logger, apiClient, query)
 			if err != nil {
 				errArr = append(errArr, fmt.Sprintf("Failed to execute the %s query: %v", query, err))
 			}
 
 			tableName := strings.Replace(query, ":", "_", -1)
-			fmt.Println("Inserting values into the", tableName, "table for the", query, "promQL query")
+			logger.Debugf("Inserting values into the %s table for the %s query", tableName, query)
 
 			b := pgx.Batch{}
 			for _, metric := range metrics {
@@ -177,16 +183,16 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 			// TODO: need to handle the case where the length of the batch queue
 			// is greater than an upper bound of ~50 and flush the rest of those
 			// metrics into a new batch.
-			fmt.Printf("Pre-Batch Insert Length: %d\n", b.Len())
+			logger.Debugf("Pre-Batch Insert Length: %d", b.Len())
 			br := r.Queryer.SendBatch(context.Background(), &b)
 			ct, err := br.Exec()
 			if err != nil {
 				errArr = append(errArr, fmt.Sprintf("failed to execute batch results: %+v", err))
 			}
-			fmt.Printf("Batch insert summary: %+v\n", ct.RowsAffected())
+			logger.Debugf("Batch insert summary: %+v", ct.RowsAffected())
 
 			if len(errArr) != 0 {
-				fmt.Println(fmt.Errorf(strings.Join(errArr, "\n")))
+				logger.Error(fmt.Errorf(strings.Join(errArr, "\n")))
 			}
 		}(query)
 
@@ -194,4 +200,36 @@ func populatePostgresTables(apiClient v1.API, r runner.PostgresqlRunner) error {
 	}
 
 	return nil
+}
+
+func setupLoggerWithFields(logLevel string, fields logrus.Fields) (logrus.FieldLogger, error) {
+	logrus.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "01-02-2006 15:04:05",
+	})
+	level, err := logrus.ParseLevel(logLevel)
+	if err != nil {
+		return nil, err
+	}
+	logger := logrus.WithFields(fields)
+	logger.Logger.SetLevel(level)
+
+	return logger, nil
+}
+
+// setupLogger is a helper function for standing up a straight-forward
+// logrus.FieldLogger instance.
+func setupLogger(logLevel string) (logrus.FieldLogger, error) {
+	logrus.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "01-02-2006 15:04:05",
+	})
+	logger := logrus.New()
+	l, err := logrus.ParseLevel(logLevel)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid log level: %s", logLevel)
+	}
+	logger.SetLevel(l)
+
+	return logger, nil
 }

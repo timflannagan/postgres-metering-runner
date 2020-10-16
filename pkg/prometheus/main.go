@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/transport"
 )
 
@@ -69,7 +70,7 @@ func NewPrometheusAPIClient(cfg PrometheusImporterConfig) (v1.API, error) {
 // ExecPromQuery is responsible for firing off a promQL query to the query_range
 // Prometheus API endpoint and returning an initialized list of the PrometheusMetric
 // type based on the matrix the promQL had returned.
-func ExecPromQuery(apiClient v1.API, query string) ([]*PrometheusMetric, error) {
+func ExecPromQuery(logger logrus.FieldLogger, apiClient v1.API, query string) ([]*PrometheusMetric, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -86,7 +87,7 @@ func ExecPromQuery(apiClient v1.API, query string) ([]*PrometheusMetric, error) 
 	if !ok {
 		return nil, fmt.Errorf("Failed to safely index the model matrix: %+v", err)
 	}
-	fmt.Println("Finished executing the", query, "promQL query")
+	logger.Infof("Finished executing the %s query", query)
 
 	return promMatrixToPrometheusMetrics(r, matrix), nil
 }

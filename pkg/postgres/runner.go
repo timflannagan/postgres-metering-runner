@@ -7,25 +7,28 @@ import (
 
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/sirupsen/logrus"
 	prom "github.com/timflannagan1/scratch/pkg/prometheus"
 )
 
 // PostgresqlConfig specifies how to connect to a Postgresql database instance.
 type PostgresqlConfig struct {
-	Hostname     string
-	Port         int
-	SSLMode      string
-	DatabaseName string
+	Hostname       string
+	Port           int
+	SSLMode        string
+	DatabaseName   string
+	ConnectOptions []string
 }
 
 // PostgresqlRunner is reponsible for managing a Postgresql client instance.
 type PostgresqlRunner struct {
 	Config  *PostgresqlConfig
 	Queryer *pgxpool.Pool
+	Logger  logrus.FieldLogger
 }
 
 // NewPostgresqlRunner is the constructor for the NewPostgresqlRunner type
-func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
+func NewPostgresqlRunner(config PostgresqlConfig, logger logrus.FieldLogger) (*PostgresqlRunner, error) {
 	// TODO: add a list of options that gets unpacked during the fmt.Sprintf call
 	// TODO: hardcode the username/password for now as we control the Postgres manifest
 	// that gets created.
@@ -35,7 +38,7 @@ func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to construct a pgxpool.Config based on the %s connection string: %v", connString, err)
 	}
-	fmt.Printf("Postgres Configuration: %+v\n", cfg.ConnString())
+	logger.Debugf("Postgres Configuration: %+v\n", cfg.ConnString())
 
 	conn, err := pgxpool.Connect(context.Background(), cfg.ConnString())
 	if err != nil {
@@ -45,14 +48,15 @@ func NewPostgresqlRunner(config PostgresqlConfig) (*PostgresqlRunner, error) {
 	return &PostgresqlRunner{
 		Config:  &config,
 		Queryer: conn,
+		Logger:  logger,
 	}, nil
 }
 
-// CreateDatabase is responsible for creating the @name database in Postgres
-// Note: Postgres has no notion of `if not exists`, so always attempt to create
-// the database. Workaround was implemented following the following stackoverflow post:
-// https://stackoverflow.com/questions/18389124/simulate-create-database-if-not-exists-for-postgresql
+// CreateDatabase is responsible for creating the @name database in Postgres.
 func (r *PostgresqlRunner) CreateDatabase(databaseName string) error {
+	// Note: Postgres has no notion of `if not exists`, so always attempt to create
+	// the database. Workaround was implemented in the following stackoverflow post:
+	// https://stackoverflow.com/questions/18389124/simulate-create-database-if-not-exists-for-postgresql
 	createSQL := fmt.Sprintf("SELECT 'CREATE DATABASE %s' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '%s')", databaseName, databaseName)
 	_, err := r.Queryer.Exec(context.Background(), createSQL)
 	if err != nil {
@@ -75,7 +79,7 @@ func (r *PostgresqlRunner) CreateTable(tableName string, checkIfExists bool) err
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Processing the %s table for creation\n", tableName)
+	logrus.Infof("Processing the %s table for creation", tableName)
 
 	return nil
 }
