@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v4"
 	"github.com/sirupsen/logrus"
@@ -109,7 +110,10 @@ func execRunner(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	r, err := runner.NewPostgresqlRunner(pgCfg, logger)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	r, err := runner.NewPostgresqlRunner(ctx, pgCfg, logger)
 	if err != nil {
 		return fmt.Errorf("Failed to initialize the PostgresqlRunner type: %+v", err)
 	}
@@ -159,51 +163,77 @@ func populatePostgresTables(logger logrus.FieldLogger, apiClient v1.API, r runne
 
 		wg.Wait()
 	}
+	logger.Debugf("Finished creating tables in Postgres")
 
 	close(errCh)
 	for e := range errCh {
 		logger.Fatal(e.Error())
 	}
 
+	const maxBatchQueueLength = 50
 	for _, query := range defaultPromtheusQueries {
 		wg.Add(1)
-		go func(query string) {
+		go func(query string, maxBatchQueueLength int) {
 			defer wg.Done()
 
-			var errArr []string
-			metrics, err := prom.ExecPromQuery(logger, apiClient, query)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			// Attempt to hit the query_range Prometheus API endpoint for the query
+			// we're currently processing. In the case we hit an error, complain about
+			// it to stdout, but exit early as we cannot insert any metrics.
+			metrics, err := prom.ExecPromQuery(ctx, logger, apiClient, query)
 			if err != nil {
-				errArr = append(errArr, fmt.Sprintf("Failed to execute the %s query: %v", query, err))
+				logger.Infof("Encountered an error while querying Prometheus: %v", err)
+				return
 			}
 
 			tableName := strings.Replace(query, ":", "_", -1)
 			logger.Debugf("Inserting values into the %s table for the %s query", tableName, query)
 
-			b := pgx.Batch{}
+			var (
+				errArr []string
+				b      pgx.Batch
+			)
 			for _, metric := range metrics {
+				// Disregard any remaining metrics that hit the max batch queue length
+				// to avoid the process potentially hanging.
+				//
+				// TODO: in future iterations, we most likely still care about those
+				// metrics and we should instead just flush those metrics into a new
+				// batch.
+				if b.Len() >= maxBatchQueueLength {
+					logger.Debugf("Encountered the max length of the batch queue for the %s query. Flushing remaining metrics.", query)
+					break
+				}
+
 				err = r.BatchInsertValuesIntoTable(&b, tableName, *metric)
 				if err != nil {
 					errArr = append(errArr, fmt.Sprintf("Failed to construct batch insert: %v", err))
 				}
+
 			}
 
-			// TODO: need to handle the case where the length of the batch queue
-			// is greater than an upper bound of ~50 and flush the rest of those
-			// metrics into a new batch.
-			logger.Debugf("Pre-Batch Insert Length: %d", b.Len())
-			br := r.Queryer.SendBatch(context.Background(), &b)
-			ct, err := br.Exec()
-			if err != nil {
-				errArr = append(errArr, fmt.Sprintf("failed to execute batch results: %+v", err))
+			// Check if the length of the batch queue is greater than zero to
+			// avoid making an unnecessary API call.
+			if b.Len() > 0 {
+				logger.Debugf("Pre-Batch Insert Length: %d", b.Len())
+				br := r.Queryer.SendBatch(context.Background(), &b)
+				_, err := br.Exec()
+				if err != nil {
+					errArr = append(errArr, fmt.Sprintf("failed to execute batch results: %+v", err))
+				}
+				logger.Debugf("Successfully batch inserted metrics for the %s query", query)
 			}
-			logger.Debugf("Batch insert summary: %+v", ct.RowsAffected())
 
 			if len(errArr) != 0 {
 				logger.Error(fmt.Errorf(strings.Join(errArr, "\n")))
 			}
-		}(query)
+		}(query, maxBatchQueueLength)
 
+		logger.Debugf("Processing the %s query", query)
 		wg.Wait()
+		logger.Debugf("Finished processing the %s query", query)
 	}
 
 	return nil

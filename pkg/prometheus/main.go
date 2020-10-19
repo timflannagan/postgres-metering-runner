@@ -47,7 +47,6 @@ type PrometheusMetric struct {
 func NewPrometheusAPIClient(cfg PrometheusImporterConfig) (v1.API, error) {
 	ht, err := transport.New(&transport.Config{
 		BearerToken: cfg.BearerToken,
-
 		TLS: transport.TLSConfig{
 			Insecure: cfg.SkipTLSVerification,
 		},
@@ -70,10 +69,7 @@ func NewPrometheusAPIClient(cfg PrometheusImporterConfig) (v1.API, error) {
 // ExecPromQuery is responsible for firing off a promQL query to the query_range
 // Prometheus API endpoint and returning an initialized list of the PrometheusMetric
 // type based on the matrix the promQL had returned.
-func ExecPromQuery(logger logrus.FieldLogger, apiClient v1.API, query string) ([]*PrometheusMetric, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+func ExecPromQuery(ctx context.Context, logger logrus.FieldLogger, apiClient v1.API, query string) ([]*PrometheusMetric, error) {
 	r := v1.Range{
 		Start: time.Now().Add(-5 * time.Minute),
 		End:   time.Now(),
@@ -81,7 +77,7 @@ func ExecPromQuery(logger logrus.FieldLogger, apiClient v1.API, query string) ([
 	}
 	res, err := apiClient.QueryRange(ctx, query, r)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to successfully fire of the test promQL query: %+v", err)
+		return nil, err
 	}
 	matrix, ok := res.(model.Matrix)
 	if !ok {

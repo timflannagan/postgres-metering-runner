@@ -28,7 +28,7 @@ type PostgresqlRunner struct {
 }
 
 // NewPostgresqlRunner is the constructor for the NewPostgresqlRunner type
-func NewPostgresqlRunner(config PostgresqlConfig, logger logrus.FieldLogger) (*PostgresqlRunner, error) {
+func NewPostgresqlRunner(ctx context.Context, config PostgresqlConfig, logger logrus.FieldLogger) (*PostgresqlRunner, error) {
 	// TODO: add a list of options that gets unpacked during the fmt.Sprintf call
 	// TODO: hardcode the username/password for now as we control the Postgres manifest
 	// that gets created.
@@ -38,9 +38,9 @@ func NewPostgresqlRunner(config PostgresqlConfig, logger logrus.FieldLogger) (*P
 	if err != nil {
 		return nil, fmt.Errorf("Failed to construct a pgxpool.Config based on the %s connection string: %v", connString, err)
 	}
-	logger.Debugf("Postgres Configuration: %+v\n", cfg.ConnString())
+	logger.Debugf("Postgres Configuration: %+v", cfg.ConnString())
 
-	conn, err := pgxpool.Connect(context.Background(), cfg.ConnString())
+	conn, err := pgxpool.Connect(ctx, cfg.ConnString())
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create a connection to the configured Postgres instance: %+v", err)
 	}
@@ -74,7 +74,7 @@ func (r *PostgresqlRunner) CreateTable(tableName string, checkIfExists bool) err
 		ifNotExistsStr = "IF NOT EXISTS"
 	}
 
-	createSQL := fmt.Sprintf(`CREATE TABLE %s %s(amount float8, timestamp timestamptz, timePrecision float8, labels jsonb)`, ifNotExistsStr, tableName)
+	createSQL := fmt.Sprintf(`CREATE TABLE %s %s(amount float8, timestamp timestamp, timePrecision float8, labels jsonb)`, ifNotExistsStr, tableName)
 	_, err := r.Queryer.Exec(context.Background(), createSQL)
 	if err != nil {
 		return err
