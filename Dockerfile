@@ -13,4 +13,4 @@ RUN make driver
 FROM centos:8
 USER 3001
 COPY --from=builder /scratch/bin/driver /
-ENTRYPOINT ["/scratch"]
+ENTRYPOINT ["/driver"]
