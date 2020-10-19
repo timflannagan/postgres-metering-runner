@@ -55,6 +55,8 @@ var (
 )
 
 const (
+	defaultLogLevel = "INFO"
+
 	defaultPostgresHostname = "localhost"
 	defaultPostgresPort     = 5432
 	defaultPostgreSSLMode   = "disable"
@@ -69,6 +71,8 @@ const (
 )
 
 func init() {
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", defaultLogLevel, "Sets the log level verbosity level")
+
 	rootCmd.PersistentFlags().StringVar(&pgCfg.Hostname, "postgres-address", defaultPostgresHostname, "The hostname of the Postgresql database instance.")
 	rootCmd.PersistentFlags().IntVar(&pgCfg.Port, "postgres-port", defaultPostgresPort, "The port of the Postgresql database instance.")
 	rootCmd.PersistentFlags().StringVar(&pgCfg.SSLMode, "postgres-ssl-mode", defaultPostgreSSLMode, "The sslMode configuration for how to authenticate to the Postgresql database instance.")
@@ -91,7 +95,7 @@ func main() {
 
 // execRunner is responsible for executing the runner package
 func execRunner(cmd *cobra.Command, args []string) error {
-	logger, err := setupLogger("INFO")
+	logger, err := setupLogger(logLevel)
 	if err != nil {
 		return err
 	}
@@ -139,6 +143,9 @@ func populatePostgresTables(logger logrus.FieldLogger, apiClient v1.API, r runne
 	errCh := make(chan error)
 
 	var wg sync.WaitGroup
+	// iterate over the list of the promQL queries we're interested in
+	// tracking and attempt to create (if it doesn't already exist) a
+	// table in Postgres before inserting metric values.
 	for _, query := range defaultPromtheusQueries {
 		wg.Add(1)
 		go func(query string) {
