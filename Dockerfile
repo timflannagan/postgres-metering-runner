@@ -6,10 +6,11 @@ COPY ./cmd ./cmd
 COPY ./go.mod ./go.mod
 COPY ./go.sum ./go.sum
 COPY ./vendor ./vendor
+COPY Makefile ./
 
-RUN CGO_ENABLED=0 go build --ldflags '-w' -o /go/scratch ./cmd/driver/
+RUN make driver
 
 FROM centos:8
 USER 3001
-COPY --from=builder /go/scratch /
+COPY --from=builder /scratch/bin/driver /
 ENTRYPOINT ["/scratch"]
