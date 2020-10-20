@@ -74,7 +74,18 @@ func (r *PostgresqlRunner) CreateTable(tableName string, checkIfExists bool) err
 		ifNotExistsStr = "IF NOT EXISTS"
 	}
 
-	createSQL := fmt.Sprintf(`CREATE TABLE %s %s(amount float8, timestamp timestamp, timePrecision float8, labels jsonb)`, ifNotExistsStr, tableName)
+	/*
+		Output for Timestamp vs. Timestamptz:
+
+		-> Using `timestamp`:   2020-10-20 14:16:54.674
+		-> Using `timestamptz`: 2020-10-20 14:32:11.574+00
+
+		metering=# show time zone;
+			TimeZone
+		----------
+			Etc/UTC
+	*/
+	createSQL := fmt.Sprintf(`CREATE TABLE %s %s(amount float8, timestamp timestamptz, timePrecision float8, labels jsonb)`, ifNotExistsStr, tableName)
 	_, err := r.Queryer.Exec(context.Background(), createSQL)
 	if err != nil {
 		return err
