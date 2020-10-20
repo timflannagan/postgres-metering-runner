@@ -64,7 +64,8 @@ const (
 
 	// Note: in case you're running outside of a Pod, use the monitoring routes
 	// instead of relying on the Service DNS resolution.
-	defaultPrometheusURI = "https://thanos-querier.openshift-monitoring.svc:9091"
+	defaultPrometheusURI       = "https://thanos-querier.openshift-monitoring.svc:9091"
+	defaultPromBearerTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 	defaultDatabaseName       = "metering"
 	defaultTableName          = "test"
@@ -74,13 +75,14 @@ const (
 func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", defaultLogLevel, "Sets the log level verbosity level")
 
-	rootCmd.PersistentFlags().StringVar(&pgCfg.Hostname, "postgres-address", defaultPostgresHostname, "The hostname of the Postgresql database instance.")
-	rootCmd.PersistentFlags().IntVar(&pgCfg.Port, "postgres-port", defaultPostgresPort, "The port of the Postgresql database instance.")
-	rootCmd.PersistentFlags().StringVar(&pgCfg.SSLMode, "postgres-ssl-mode", defaultPostgreSSLMode, "The sslMode configuration for how to authenticate to the Postgresql database instance.")
-	rootCmd.PersistentFlags().StringVar(&pgCfg.DatabaseName, "postgres-database-name", "metering", "The name of an existing database in Postgresql.")
+	rootCmd.PersistentFlags().StringVar(&pgCfg.Hostname, "postgres-address", defaultPostgresHostname, "The hostname of the Postgresql database instance")
+	rootCmd.PersistentFlags().IntVar(&pgCfg.Port, "postgres-port", defaultPostgresPort, "The port of the Postgresql database instance")
+	rootCmd.PersistentFlags().StringVar(&pgCfg.SSLMode, "postgres-ssl-mode", defaultPostgreSSLMode, "The sslMode configuration for how to authenticate to the Postgresql database instance")
+	rootCmd.PersistentFlags().StringVar(&pgCfg.DatabaseName, "postgres-database-name", "metering", "The name of an existing database in Postgresql")
 
 	rootCmd.PersistentFlags().StringVar(&promCfg.Hostname, "prometheus-address", defaultPrometheusURI, "The hostname of the Prometheus cluster instance")
-	rootCmd.PersistentFlags().StringVar(&promCfg.BearerToken, "prometheus-bearer-token", "", "The path to the bearer token file used to authenticate to the Prometheus instance")
+	rootCmd.PersistentFlags().StringVar(&promCfg.BearerToken, "prometheus-bearer-token", "", "The bearer token string used to authenticate to the Prometheus instance")
+	rootCmd.PersistentFlags().StringVar(&promCfg.BearerTokenFile, "prometheus-bearer-token-path", defaultPromBearerTokenPath, "The path to the bearer token file used to authenticate to the in-cluster Prometheus instance")
 	rootCmd.PersistentFlags().BoolVar(&promCfg.SkipTLSVerification, "prometheus-tls-insecure", true, "Allow insecure connections to Prometheus")
 }
 
@@ -105,7 +107,7 @@ func execRunner(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to parse the Prometheus URL: %v", err)
 	}
-	apiClient, err := prom.NewPrometheusAPIClient(promCfg)
+	apiClient, err := prom.NewPrometheusAPIClient(logger, promCfg)
 	if err != nil {
 		return err
 	}
