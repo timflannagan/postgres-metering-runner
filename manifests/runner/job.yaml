@@ -1,0 +1,29 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: exec-runner
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          activeDeadlineSeconds: 25
+          serviceAccountName: runner
+          restartPolicy: Never
+          containers:
+          - name: exporter
+            image: quay.io/tflannag/promscale:latest
+            imagePullPolicy: Always
+            args:
+            - exec
+            - --postgres-address=postgres.tflannag.svc
+            - --postgres-port=5432
+            - --log-level=debug
+            resources:
+              requests:
+                cpu: 250m
+                memory: 100Mi
+              limits:
+                cpu: 500m
+                memory: 250Mi

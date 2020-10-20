@@ -25,15 +25,9 @@ if ! oc -n ${NAMESPACE} get service postgres >/dev/null 2>&1; then
     oc -n ${NAMESPACE} create -f ${MANIFEST_DIR}/db/service.yaml
 fi
 
-if ! oc -n ${NAMESPACE} get deployment runner >/dev/null 2>&1; then
-    oc -n ${NAMESPACE} create -f ${MANIFEST_DIR}/runner/deployment.yaml
+if ! oc -n ${NAMESPACE} get cronjob exec-runner >/dev/null 2>&1; then
+    oc -n ${NAMESPACE} create -f ${MANIFEST_DIR}/runner/job.yaml
 fi
-
-# TODO: currently a service object isn't needed as we're not exposing any ports
-# and we don't need to route traffic to the runner Pod.
-# if ! oc -n ${NAMESPACE} get svc runner >/dev/null 2>&1; then
-#     oc -n ${NAMESPACE} create -f ${MANIFEST_DIR}/runner/service.yaml
-# fi
 
 if ! oc -n ${NAMESPACE} get serviceaccount runner >/dev/null 2>&1; then
     oc -n ${NAMESPACE} create -f ${MANIFEST_DIR}/runner/sa.yaml
