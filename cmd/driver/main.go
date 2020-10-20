@@ -213,18 +213,22 @@ func populatePostgresTables(logger logrus.FieldLogger, apiClient v1.API, r runne
 				if err != nil {
 					errArr = append(errArr, fmt.Sprintf("Failed to construct batch insert: %v", err))
 				}
-
 			}
 
 			// Check if the length of the batch queue is greater than zero to
 			// avoid making an unnecessary API call.
 			if b.Len() > 0 {
-				logger.Debugf("Pre-Batch Insert Length: %d", b.Len())
+				logger.Debugf("Length of batch queue pre-insert: %d", b.Len())
+
+				insertTimeStart := time.Now()
 				br := r.Queryer.SendBatch(context.Background(), &b)
 				_, err := br.Exec()
 				if err != nil {
 					errArr = append(errArr, fmt.Sprintf("failed to execute batch results: %+v", err))
 				}
+				defer br.Close()
+
+				logger.Debugf("Batch insert for the %s query took %v", query, time.Since(insertTimeStart))
 				logger.Debugf("Successfully batch inserted metrics for the %s query", query)
 			}
 
