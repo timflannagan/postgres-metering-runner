@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+commonLabels:
+    app: postgres
+
+namespace: runner
+
+resources:
+    - namespace.yaml
+    - serviceaccount.yaml
+    - cluster-role.yaml
+    - cluster-role-binding.yaml
+    - deployment.yaml
+    - recording-rules.yaml

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  serviceName: postgres
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      name: postgres
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        fsGroup: 1000
+      serviceAccountName: postgres
+      containers:
+        - image: postgres:12
+          env:
+            - name: POSTGRES_DB
+              value: metering
+            - name: POSTGRES_PASSWORD
+              value: testpass
+            - name: POSTGRES_USER
+              value: testuser
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: trust
+          imagePullPolicy: IfNotPresent
+          name: postgresql
+          ports:
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+          resources:
+            limits:
+              cpu: "1"
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+          volumeMounts:
+            - name: postgres-lib-data
+              mountPath: /var/lib/postgresql
+      volumes:
+        - name: postgres-lib-data
+          persistentVolumeClaim:
+            claimName: postgres-postgres-data

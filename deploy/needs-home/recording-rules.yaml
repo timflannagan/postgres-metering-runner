@@ -1,0 +1,54 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: metering
+  namespace: openshift
+spec:
+  groups:
+    - name: metering.rules
+      rules:
+        - record: metering:node_allocatable_cpu_cores
+          expr: |
+            kube_node_status_allocatable_cpu_cores * on(node) group_left(provider_id) max(kube_node_info) by (node, provider_id)
+        - record: metering:node_allocatable_memory_bytes
+          expr: |
+            kube_node_status_allocatable_memory_bytes * on(node) group_left(provider_id) max(kube_node_info) by (node, provider_id)
+        - record: metering:node_capacity_cpu_cores
+          expr: |
+            kube_node_status_capacity_cpu_cores * on(node) group_left(provider_id) max(kube_node_info) by (node, provider_id)
+        - record: metering:node_capacity_memory_bytes
+          expr: |
+            kube_node_status_capacity_memory_bytes * on(node) group_left(provider_id) max(kube_node_info) by (node, provider_id)
+        - record: metering:persistentvolumeclaim_capacity_bytes
+          expr: |
+            kubelet_volume_stats_capacity_bytes
+        - record: metering:persistentvolumeclaim_phase
+          expr: |
+            kube_persistentvolumeclaim_status_phase
+        - record: metering:persistentvolumeclaim_request_bytes
+          expr: |
+            max(kube_persistentvolumeclaim_resource_requests_storage_bytes) by (namespace, persistentvolumeclaim) + on (namespace, persistentvolumeclaim) group_left(storageclass, volumename) sum(kube_persistentvolumeclaim_info{volumename!=""}) by (namespace, persistentvolumeclaim, storageclass, volumename) * 0
+        - record: metering:persistentvolumeclaim_usage_bytes
+          expr: |
+            kubelet_volume_stats_used_bytes
+        - record: metering:pod_limit_cpu_cores
+          expr: |
+            sum(kube_pod_container_resource_limits_cpu_cores) by (pod, namespace, node)
+        - record: metering:pod_limit_memory_bytes
+          expr: |
+            sum(kube_pod_container_resource_limits_memory_bytes) by (pod, namespace, node)
+        - record: metering:pod_persistentvolumeclaim_request_info
+          expr: |
+            kube_pod_spec_volumes_persistentvolumeclaims_info
+        - record: metering:pod_request_cpu_cores
+          expr: |
+            sum(kube_pod_container_resource_requests_cpu_cores) by (pod, namespace, node)
+        - record: metering:pod_request_memory_bytes
+          expr: |
+            sum(kube_pod_container_resource_requests_memory_bytes) by (pod, namespace, node)
+        - record: metering:pod_usage_cpu_cores
+          expr: |
+            sum(rate(container_cpu_usage_seconds_total{container!="POD",container!="",pod!=""}[5m])) BY (pod, namespace, node)
+        - record: metering:pod_usage_memory_bytes
+          expr: |
+            sum(container_memory_usage_bytes{container!="POD", container!="",pod!=""}) by (pod, namespace, node)
